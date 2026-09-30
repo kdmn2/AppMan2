@@ -89,6 +89,29 @@ On first run AppMan2 asks where to store applications and writes
 `~/.config/appman/appman-config` — the same file AppMan uses. If that file
 already exists, AppMan2 uses it immediately.
 
+## Coexisting with the original AppMan
+
+AppMan2 uses the same configuration, state and application data as the
+original AppMan, so both can be installed **side by side** — for example on a
+Steam Deck that already runs AppMan in local ("AppMan Mode") form:
+
+```bash
+# keep using the original appman, and install AppMan2 under its own name
+curl -sLo ~/.local/bin/appman2 \
+    https://raw.githubusercontent.com/kdmn2/AppMan2/main/appman
+chmod +x ~/.local/bin/appman2
+```
+
+AppMan2 recognises the `appman2` command name for its own self-update and
+modules. It will immediately see the existing `~/.config/appman/appman-config`,
+the `~/.local/share/AM` data and every app already installed by AppMan.
+
+* update the original AppMan: `appman -s` (uses `ivan-hc/AM`)
+* update AppMan2:              `appman2 -s` (uses the AppMan2 repository only)
+
+Both share the same apps directory, so they never fight over which apps are
+installed — and neither one ever touches the other's program files.
+
 ## Compatibility with AppMan
 
 AppMan2 reuses AppMan's configuration, state, metadata and application data:

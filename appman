@@ -707,7 +707,9 @@ _appman() {
 	fi
 	mkdir -p "$BINDIR" "$DATADIR"/"$LAUNCHERS_DIR" "$DATADIR"/icons || exit 1
 	AMCLI="appman"
-	AMCLIPATH="$DIR/$AMCLI"
+	# AppMan2 may be installed under any name (e.g. "appman2" to sit next to
+	# the original "appman"); use the real running script for self-references.
+	AMCLIPATH="$CLI_PATH"
 	SUDOCMD=""
 	APPSPATH="$APPSDIR"
 	AMPATH="$APPSDIR/$AMCLI"
@@ -725,7 +727,7 @@ _appman() {
 		MODULES_PATH="/usr/lib/am/modules"
 	elif [ "$CLI" = am ] && [ -f "$APPMANCONFIG"/appman-mode ] && [ -d "$(readlink -f /opt)/am/modules" ]; then
 		MODULES_PATH="$(readlink -f /opt)/am/modules"
-	elif [ "$CLI" = appman ]; then
+	elif [ "$CLI" = appman ] || [ "$CLI" = appman2 ]; then
 		mkdir -p "$MODULES_PATH" || exit 1
 	fi
 }
@@ -1795,7 +1797,7 @@ APPMAN_MSG_THINK=$(echo -e $"$DIVIDING_LINE\nNOTE: You can also choose to simply
 
 _use_appman() {
 	_online_check
-	[ "$CLI" = appman ] && echo $" This function only works for AM" && exit 0
+	{ [ "$CLI" = appman ] || [ "$CLI" = appman2 ]; } && echo $" This function only works for AM" && exit 0
 	printf "%b\n" "$APPMAN_MSG_THINK" | _fit
 	_read $" Do you wish to enter \"AppMan Mode\" (y,N)?" yn
 	if ! echo "$yn" | grep -i '^y' >/dev/null 2>&1; then
@@ -2229,7 +2231,7 @@ _use_sync() {
 					_sync_modules
 					_sync_amcli
 				fi
-			elif [ "$CLI" = appman ]; then
+			elif [ "$CLI" = appman ] || [ "$CLI" = appman2 ]; then
 				_sync_modules
 				_sync_amcli
 			fi
