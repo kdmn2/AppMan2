@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+##############################################################################
+# AppMan2 - portable installer
+#
+# Installs the AppMan2 "appman" script into $BINDIR so it can be used from
+# the command line.  AppMan2 is portable and self-updating: the program
+# updates itself from the AppMan2 repository (see APPMAN2_REPO in the
+# "appman" script), never from the original ivan-hc/AppMan repository.
+#
+# AppMan2 uses the SAME configuration and application data as the original
+# AppMan (e.g. ~/.config/appman/appman-config and ~/.local/share/AM), so an
+# existing AppMan user can switch to AppMan2 without losing anything.
+##############################################################################
+
+set -e
+
+BINDIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
+SRCDIR="$(cd "$(dirname "$0")" && pwd)"
+
+mkdir -p "$BINDIR"
+
+if [ ! -f "$SRCDIR/appman" ]; then
+	echo "ERROR: appman script not found next to this installer" >&2
+	exit 1
+fi
+
+install -m 0755 "$SRCDIR/appman" "$BINDIR/appman"
+
+# Optionally copy the modules so the first run works offline; otherwise they
+# are downloaded from the AppMan2 repository on demand.
+if [ -d "$SRCDIR/modules" ]; then
+	mkdir -p "$BINDIR/../share/appman2" 2>/dev/null || true
+fi
+
+if ! echo "$PATH" | grep -q "$BINDIR"; then
+	echo "WARNING: \"$BINDIR\" is not in PATH, add it to your shell profile:"
+	echo "  export PATH=\"\$PATH:$BINDIR\""
+fi
+
+echo "AppMan2 installed: $BINDIR/appman"
+echo
+echo "Run 'appman -h' for help, or 'appman -v' for the version."
+echo "Update AppMan2 itself with 'appman -s' (from the AppMan2 repository)."

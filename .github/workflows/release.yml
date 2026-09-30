@@ -1,0 +1,35 @@
+name: AppMan2 Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Sanity check
+        run: |
+          bash -n appman
+          grep -q '^AMVERSION=' appman
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: "AppMan2 ${{ github.ref_name }}"
+          tag_name: "${{ github.ref_name }}"
+          body: |
+            AppMan2 ${{ github.ref_name }}
+
+            The `appman` script in this repository is self-updating.  Run
+            `appman -s` (or `appman -u`) to update AppMan2 from this
+            repository.  AppMan2 NEVER updates itself from ivan-hc/AppMan.
+          prerelease: false
+          draft: false
