@@ -2,20 +2,26 @@
 ##############################################################################
 # AppMan2 - portable installer
 #
-# Installs the AppMan2 "appman" script into $BINDIR so it can be used from
-# the command line.  AppMan2 is portable and self-updating: the program
-# updates itself from the AppMan2 repository (see APPMAN2_REPO in the
-# "appman" script), never from the original ivan-hc/AppMan repository.
+# Installs AppMan2 into $BINDIR as "appman2" by default, so it can be used
+# from the command line WITHOUT overwriting the original AppMan binary
+# ("appman").  Pass a different name as the first argument if you really want
+# to replace the original AppMan, e.g.:  ./INSTALL appman
+#
+# AppMan2 is portable and self-updating: the program updates itself from the
+# AppMan2 repository (see APPMAN2_REPO in the "appman" script), never from
+# the original ivan-hc/AppMan repository.
 #
 # AppMan2 uses the SAME configuration and application data as the original
 # AppMan (e.g. ~/.config/appman/appman-config and ~/.local/share/AM), so an
-# existing AppMan user can switch to AppMan2 without losing anything.
+# existing AppMan user can install AppMan2 alongside and immediately see all
+# of their existing applications.
 ##############################################################################
 
 set -e
 
 BINDIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 SRCDIR="$(cd "$(dirname "$0")" && pwd)"
+NAME="${1:-appman2}"
 
 mkdir -p "$BINDIR"
 
@@ -24,20 +30,23 @@ if [ ! -f "$SRCDIR/appman" ]; then
 	exit 1
 fi
 
-install -m 0755 "$SRCDIR/appman" "$BINDIR/appman"
-
-# Optionally copy the modules so the first run works offline; otherwise they
-# are downloaded from the AppMan2 repository on demand.
-if [ -d "$SRCDIR/modules" ]; then
-	mkdir -p "$BINDIR/../share/appman2" 2>/dev/null || true
+if [ -e "$BINDIR/$NAME" ]; then
+	echo "WARNING: overwriting the existing $BINDIR/$NAME" >&2
 fi
+
+if [ -e "$BINDIR/appman" ] && [ "$NAME" != "appman" ]; then
+	echo "NOTE: the original AppMan binary exists at $BINDIR/appman," >&2
+	echo "      it will NOT be touched (AppMan2 is installed as \"$NAME\")." >&2
+fi
+
+install -m 0755 "$SRCDIR/appman" "$BINDIR/$NAME"
 
 if ! echo "$PATH" | grep -q "$BINDIR"; then
 	echo "WARNING: \"$BINDIR\" is not in PATH, add it to your shell profile:"
 	echo "  export PATH=\"\$PATH:$BINDIR\""
 fi
 
-echo "AppMan2 installed: $BINDIR/appman"
+echo "AppMan2 installed: $BINDIR/$NAME"
 echo
-echo "Run 'appman -h' for help, or 'appman -v' for the version."
-echo "Update AppMan2 itself with 'appman -s' (from the AppMan2 repository)."
+echo "Run '$NAME -h' for help, or '$NAME -v' for the version."
+echo "Update AppMan2 itself with '$NAME -s' (from the AppMan2 repository)."

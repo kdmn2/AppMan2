@@ -58,12 +58,20 @@ cd AppMan2
 ./INSTALL
 ```
 
+`./INSTALL` installs AppMan2 as **`appman2`** so it can coexist with the
+original AppMan (it never overwrites an existing `appman`). If you really
+want to replace the original AppMan instead, pass the name explicitly:
+
+```bash
+./INSTALL appman
+```
+
 or, manually:
 
 ```bash
 mkdir -p ~/.local/bin
-cp ./appman ~/.local/bin/appman
-chmod +x ~/.local/bin/appman
+cp ./appman ~/.local/bin/appman2     # NOTE: appman2, not appman
+chmod +x ~/.local/bin/appman2
 ```
 
 > `APPMAN2_REPO` in the `appman` script is pre-configured to this repository
