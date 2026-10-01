@@ -101,7 +101,18 @@ already exists, AppMan2 uses it immediately.
 
 AppMan2 uses the same configuration, state and application data as the
 original AppMan, so both can be installed **side by side** — for example on a
-Steam Deck that already runs AppMan in local ("AppMan Mode") form:
+Steam Deck that already runs AppMan in local ("AppMan Mode") form.
+
+The easiest way to get both installed (restoring the original AppMan first if
+it was overwritten):
+
+```bash
+git clone https://github.com/kdmn2/AppMan2.git
+cd AppMan2
+./INSTALL-ALONGSIDE -y     # installs appman (original) + appman2 (AppMan2)
+```
+
+or, manually, install AppMan2 under its own name next to the original:
 
 ```bash
 # keep using the original appman, and install AppMan2 under its own name
@@ -109,6 +120,9 @@ curl -sLo ~/.local/bin/appman2 \
     https://raw.githubusercontent.com/kdmn2/AppMan2/main/appman
 chmod +x ~/.local/bin/appman2
 ```
+
+See [docs/INSTALL-ALONGSIDE-APPMAN.md](docs/INSTALL-ALONGSIDE-APPMAN.md) for
+the full step-by-step procedure.
 
 AppMan2 recognises the `appman2` command name for its own self-update and
 modules. It will immediately see the existing `~/.config/appman/appman-config`,

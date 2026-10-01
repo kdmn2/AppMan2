@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+##############################################################################
+# AppMan2 - install the ORIGINAL AppMan and AppMan2 side by side
+#
+# Installs two separate, coexisting binaries into $BINDIR:
+#
+#   1. the ORIGINAL AppMan   ->  $BINDIR/appman
+#      (downloaded from its official source ivan-hc/AM, APP-MANAGER renamed
+#       to "appman" - this is exactly what the original AppMan is)
+#   2. AppMan2               ->  $BINDIR/appman2
+#      (downloaded from the AppMan2 repository kdmn2/AppMan2)
+#
+# Both share the same configuration/state/app data (~/.config/appman,
+# ~/.local/share/AM, the apps directory) but their binaries never touch each
+# other.
+#
+# NOTE: AppMan2 updates ITSELF only from the AppMan2 repository. Downloading
+# the separate "appman" binary from ivan-hc/AM here is an explicit user action
+# that installs the ORIGINAL AppMan program - it is NOT AppMan2 self-updating.
+#
+# Usage:  ./INSTALL-ALONGSIDE [-y|--yes]
+#   -y/--yes   assume yes when asked whether to restore the original AppMan.
+##############################################################################
+
+set -e
+
+BINDIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
+AM_REPO_RAW="https://raw.githubusercontent.com/ivan-hc/AM/main/APP-MANAGER"
+APPMAN2_RAW="https://raw.githubusercontent.com/kdmn2/AppMan2/main/appman"
+
+for arg in "$@"; do
+	case "$arg" in
+		-y|--yes) ASSUME_YES=1 ;;
+	esac
+done
+
+mkdir -p "$BINDIR"
+
+if ! command -v curl >/dev/null 2>&1; then
+	echo "ERROR: curl is required" >&2
+	exit 1
+fi
+
+restore_original() {
+	echo "Installing the ORIGINAL AppMan as $BINDIR/appman ..."
+	curl -fsSLo "$BINDIR/appman" "$AM_REPO_RAW"
+	chmod +x "$BINDIR/appman"
+	echo "  OK: $BINDIR/appman"
+}
+
+echo "============================================================"
+echo " Step 1/2 - ORIGINAL AppMan"
+echo "============================================================"
+if [ -f "$BINDIR/appman" ]; then
+	if grep -q "APPMAN2_REPO" "$BINDIR/appman" 2>/dev/null; then
+		echo "WARNING: $BINDIR/appman is currently an AppMan2 binary"
+		echo "         (it was probably overwritten). Restore the original?"
+		if [ -n "$ASSUME_YES" ]; then
+			restore_original
+		else
+			read -r -p "Restore the ORIGINAL AppMan there? (Y/n) " yn
+			case "$yn" in
+				n*|N*) echo "  leaving $BINDIR/appman untouched";;
+				*)     restore_original;;
+			esac
+		fi
+	else
+		echo "  $BINDIR/appman already exists and looks like the original AppMan."
+		echo "  Leaving it untouched."
+	fi
+else
+	restore_original
+fi
+
+echo
+echo "============================================================"
+echo " Step 2/2 - AppMan2"
+echo "============================================================"
+echo "Installing AppMan2 as $BINDIR/appman2 ..."
+curl -fsSLo "$BINDIR/appman2" "$APPMAN2_RAW"
+chmod +x "$BINDIR/appman2"
+echo "  OK: $BINDIR/appman2"
+
+echo
+echo "Done. Both binaries coexist:"
+echo "  original AppMan : $BINDIR/appman   -> update with: appman  -s"
+echo "  AppMan2         : $BINDIR/appman2  -> update with: appman2 -s"
+if ! echo "$PATH" | grep -q "$BINDIR"; then
+	echo
+	echo "WARNING: \"$BINDIR\" is not in PATH, add it to your shell profile:"
+	echo "  export PATH=\"\$PATH:$BINDIR\""
+fi
