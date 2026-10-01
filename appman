@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-AMVERSION="1.0-1"
+AMVERSION="1.1-1"
 
 ##############################################################################
 # AppMan2 program identity

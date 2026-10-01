@@ -63,7 +63,7 @@ chmod +x "$BINDIR/appman2"
 
 ```bash
 appman  -v   # -> 10.x  (original AppMan)
-appman2 -v   # -> APPMAN2 1.0-1
+appman2 -v   # -> APPMAN2 1.1-1
 ```
 
 On the first run, if `~/.config/appman/appman-config` does not exist yet, the
