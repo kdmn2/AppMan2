@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-AMVERSION="1.1-1"
+AMVERSION="1.1-2"
 
 ##############################################################################
 # AppMan2 program identity
@@ -214,7 +214,7 @@ _check_wget_version
 # introduced: the wrappers only need sh, stat, date and ls.
 ##############################################################################
 _stall_guard_dir="${STALL_GUARD_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/appman-stall-guard}"
-_stall_guard_version="1"
+_stall_guard_version="2"
 
 _stall_guard_needs_update() {
 	[ -f "$1" ] || return 0
@@ -227,7 +227,7 @@ _setup_stall_guard() {
 	if command -v wget >/dev/null 2>&1 && _stall_guard_needs_update "$_stall_guard_dir/wget"; then
 		cat > "$_stall_guard_dir/wget" <<'WRAPPER_WGET'
 #!/bin/sh
-# APPMAN2-STALL-GUARD v1
+# APPMAN2-STALL-GUARD v2
 SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
 real=""
 IFS=:
@@ -254,7 +254,7 @@ case " $* " in
 esac
 case " $* " in
 	*" -O - "*|*" -O- "*|*" -qO-"*|*" -q -O - "*)
-		exec "$real" "$@" ;;
+		exec "$real" --timeout=60 "$@" ;;
 esac
 target=""
 prev=""
@@ -290,6 +290,12 @@ pid=$!
 last_size=-1
 last_seen=$(date +%s)
 while kill -0 "$pid" 2>/dev/null; do
+	# If the parent (AppMan2/updater) is gone, stop the download too
+	if ! kill -0 "$PPID" 2>/dev/null; then
+		kill "$pid" 2>/dev/null
+		wait "$pid" 2>/dev/null
+		exit 124
+	fi
 	sleep 1
 	size=0
 	if [ -n "$target" ] && [ -f "$target" ]; then
@@ -334,7 +340,7 @@ WRAPPER_WGET
 	if command -v curl >/dev/null 2>&1 && _stall_guard_needs_update "$_stall_guard_dir/curl"; then
 		cat > "$_stall_guard_dir/curl" <<'WRAPPER_CURL'
 #!/bin/sh
-# APPMAN2-STALL-GUARD v1
+# APPMAN2-STALL-GUARD v2
 SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
 real=""
 IFS=:
@@ -355,15 +361,19 @@ if [ -r "${XDG_CONFIG_HOME:-$HOME/.config}/appman/appman-stall-timeout" ]; then
 		*) timeout="$t" ;;
 	esac
 fi
+# API/check calls that read to stdout or headers get a hard time limit so a
+# hung remote can never block the update run.
 for a in "$@"; do
 	case "$a" in
-		--help|-h|--version|-V|--head|-I)
+		--help|-h|--version|-V)
 			exec "$real" "$@" ;;
+		--head|-I)
+			exec "$real" --max-time "${APPMAN_CURL_MAXTIME:-60}" "$@" ;;
 	esac
 done
 case " $* " in
 	*" -o - "*|*" -o-"*|*" -O - "*|*" -O-"*|*" --output - "*)
-		exec "$real" "$@" ;;
+		exec "$real" --max-time "${APPMAN_CURL_MAXTIME:-60}" "$@" ;;
 esac
 out_opt=""
 target=""
@@ -388,13 +398,13 @@ for a in "$@"; do
 		-[!-]*O*) out_opt="remote" ;;
 	esac
 done
-[ "$out_opt" = "file" ] && [ "$target" = "-" ] && exec "$real" "$@"
-[ "$target" = "/dev/null" ] && exec "$real" "$@"
+[ "$out_opt" = "file" ] && [ "$target" = "-" ] && exec "$real" --max-time "${APPMAN_CURL_MAXTIME:-60}" "$@"
+[ "$target" = "/dev/null" ] && exec "$real" --max-time "${APPMAN_CURL_MAXTIME:-60}" "$@"
 if [ "$out_opt" = "remote" ]; then
 	[ -n "$url" ] && target=$(basename "$url")
 fi
 if [ -z "$out_opt" ]; then
-	exec "$real" "$@"
+	exec "$real" --max-time "${APPMAN_CURL_MAXTIME:-60}" "$@"
 fi
 [ -z "$target" ] && target="index.html"
 filesize() {
@@ -410,6 +420,12 @@ pid=$!
 last_size=-1
 last_seen=$(date +%s)
 while kill -0 "$pid" 2>/dev/null; do
+	# If the parent (AppMan2/updater) is gone, stop the download too
+	if ! kill -0 "$PPID" 2>/dev/null; then
+		kill "$pid" 2>/dev/null
+		wait "$pid" 2>/dev/null
+		exit 124
+	fi
 	sleep 1
 	size=0
 	if [ -n "$target" ] && [ -f "$target" ]; then
@@ -2260,11 +2276,11 @@ _use_verify() {
 		fi
 		if [ -n "$download_url" ]; then
 			# Search for zsync file
-			digest=$(curl -Lsf "$download_url.zsync" | grep -a "SHA\|MD5" | tr -d '\0')
+			digest=$(curl -Lsf --max-time "${APPMAN_CURL_MAXTIME:-60}" "$download_url.zsync" | grep -a "SHA\|MD5" | tr -d '\0')
 			if [ -z "$digest" ]; then
 				# Search other sources if no zsync file
 				for ext in digest DIGEST sha512 sha512sum sha256 sha256sum sha1 sha1sum md5 md5sum; do
-					digest=$(curl -Lsf "$download_url.$ext")
+					digest=$(curl -Lsf --max-time "${APPMAN_CURL_MAXTIME:-60}" "$download_url.$ext")
 					# Skip empty responses (some CDNs return HTTP 404 with empty body)
 					[ -z "$digest" ] && continue
 					if ! echo "$digest" | grep -qi "not found\|access denied"; then
@@ -2356,6 +2372,32 @@ _update_list_updatable_apps() {
 
 [ -z "$ALT_GH" ] && ALT_GH="https://api.gh.pkgforge.dev"
 
+# APPMAN2: bound every network operation and every per-app updater so that a
+# hung download, API call or updater can never block the whole update run.
+#   * APPMAN_UPDATE_TIMEOUT (default 3600s): per-app updater budget.
+#   * APPMAN_CURL_MAXTIME  (default 60s):  bound for curl calls that read to
+#     stdout (e.g. GitHub API queries inside updaters).
+# Both can be tuned with the environment variable or a number (seconds) in
+# the AppMan config directory: ~/.config/appman/appman-update-timeout and
+# ~/.config/appman/appman-curl-maxtime.
+APPMAN_UPDATE_TIMEOUT="${APPMAN_UPDATE_TIMEOUT:-3600}"
+[ -r "$APPMANCONFIG/appman-update-timeout" ] && APPMAN_UPDATE_TIMEOUT=$(head -n1 "$APPMANCONFIG/appman-update-timeout" 2>/dev/null)
+case "$APPMAN_UPDATE_TIMEOUT" in ''|*[!0-9]*) APPMAN_UPDATE_TIMEOUT=3600 ;; esac
+export APPMAN_UPDATE_TIMEOUT
+APPMAN_CURL_MAXTIME="${APPMAN_CURL_MAXTIME:-60}"
+[ -r "$APPMANCONFIG/appman-curl-maxtime" ] && APPMAN_CURL_MAXTIME=$(head -n1 "$APPMANCONFIG/appman-curl-maxtime" 2>/dev/null)
+case "$APPMAN_CURL_MAXTIME" in ''|*[!0-9]*) APPMAN_CURL_MAXTIME=60 ;; esac
+export APPMAN_CURL_MAXTIME
+
+# Run a command under a per-app budget (uses coreutils "timeout" when present).
+_apm2_timeout_run() {
+	if command -v timeout >/dev/null 2>&1; then
+		timeout "$APPMAN_UPDATE_TIMEOUT" "$@"
+	else
+		"$@"
+	fi
+}
+
 _update_determine_gh_apps_number() {
 	for arg in $ARGS; do
 		argpath_items=$(echo "$ARGPATHS" | grep "/$arg$" | xargs)
@@ -2399,11 +2441,15 @@ _update_run_updater() {
 		rm -f "$argpath"/version # Triggers AM-updater to re-download the Appimage binary
 	fi
 	if [ -z "$debug_update" ]; then
-		"$argpath"/AM-updater >"$updater_log" 2>&1
+		_apm2_timeout_run "$argpath"/AM-updater >"$updater_log" 2>&1
 		updater_exit=$?
 	else
-		"$argpath"/AM-updater 2>&1 | tee "$updater_log"
+		_apm2_timeout_run "$argpath"/AM-updater 2>&1 | tee "$updater_log"
 		updater_exit=${PIPESTATUS[0]}
+	fi
+	# 124 = killed by "timeout" (hung download / API call without progress)
+	if [ "$updater_exit" = "124" ]; then
+		echo "AppMan2: ⚠️ update timed out after ${APPMAN_UPDATE_TIMEOUT}s (hung download or API call)" >> "$updater_log"
 	fi
 	sed -i "s#$ALT_GH#https://api.github.com#g" "$argpath"/AM-updater 2>/dev/null
 	checksum_msg=$(_use_verify | xargs 2>/dev/null)
@@ -2450,13 +2496,13 @@ _auto_update_appimage() {
 		return
 	fi
 	if command -v appimageupdatetool >/dev/null 2>&1; then
-		( appimageupdatetool -Or "$appbin" >"$AMCACHEDIR/update-log-$arg" 2>&1
+		( _apm2_timeout_run appimageupdatetool -Or "$appbin" >"$AMCACHEDIR/update-log-$arg" 2>&1
 		  echo "$?" > "$AMCACHEDIR/update-exit-$arg" ) &
 	elif command -v appimageupdate >/dev/null 2>&1; then
-		( appimageupdate "$appbin" >"$AMCACHEDIR/update-log-$arg" 2>&1
+		( _apm2_timeout_run appimageupdate "$appbin" >"$AMCACHEDIR/update-log-$arg" 2>&1
 		  echo "$?" > "$AMCACHEDIR/update-exit-$arg" ) &
 	elif command -v zsync >/dev/null 2>&1 && [ -f "$appbin.zsync" ]; then
-		( zsync "$appbin.zsync" "$appbin" >"$AMCACHEDIR/update-log-$arg" 2>&1
+		( _apm2_timeout_run zsync "$appbin.zsync" "$appbin" >"$AMCACHEDIR/update-log-$arg" 2>&1
 		  echo "$?" > "$AMCACHEDIR/update-exit-$arg" ) &
 	else
 		echo "unsupported-tool|$arg" >> "$AMCACHEDIR/update-results"
@@ -2572,7 +2618,7 @@ _update_all_apps() {
 			elif [ -f "$argpath"/updater ]; then
 				# Self-updatable app shipping its own updater script
 				if [ -x "$argpath/updater" ]; then
-					( "$argpath"/updater >"$AMCACHEDIR/update-log-$arg" 2>&1
+					( _apm2_timeout_run "$argpath"/updater >"$AMCACHEDIR/update-log-$arg" 2>&1
 					  echo "$?" > "$AMCACHEDIR/update-exit-$arg" ) &
 				else
 					echo "unsupported|$arg" >> "$AMCACHEDIR/update-results"
@@ -2678,7 +2724,7 @@ _use_update() {
 					if [ -f "$argpath"/AM-updater ]; then
 						_update_app
 					else
-						( "$argpath"/updater >"$AMCACHEDIR/update-log-$arg" 2>&1
+						( _apm2_timeout_run "$argpath"/updater >"$AMCACHEDIR/update-log-$arg" 2>&1
 						  echo "$?" > "$AMCACHEDIR/update-exit-$arg" ) &
 					fi
 				elif [ ! -d "$argpath" ]; then

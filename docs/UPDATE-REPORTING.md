@@ -30,7 +30,7 @@ so you always see what is being examined.
 
 When an update **fails**, AppMan2 prints the relevant error lines from the
 updater log underneath the result (prefixed with `↳`), so you can see why —
-for example a stalled or dropped download:
+for example a stalled or dropped download, or an updater that hung:
 
 ```
  Checking applications for updates...
@@ -44,7 +44,25 @@ for example a stalled or dropped download:
       ↳ intentional failure while checking for updates
  ✖ TAPP-UPDATESTALL — update FAILED
       ↳ ✖ Download dropped: stalled (no progress for 30s) — http://…
+ ✖ HANGAPP — update FAILED
+      ↳ AppMan2: ⚠️ update timed out after 3600s (hung download or API call)
 ```
+
+## Never hangs
+
+A hung download, API call or updater can never block the whole update run:
+
+* every curl call that reads to stdout (e.g. GitHub API queries inside
+  updaters) is bounded by `APPMAN_CURL_MAXTIME` (default **60 s**);
+* every per-app updater runs under `APPMAN_UPDATE_TIMEOUT` (default
+  **3600 s**); if it is still running after that it is killed and reported as
+  *update FAILED* with a timeout message;
+* stalled file downloads are dropped by the stall-guard
+  (see `docs/STALLED-DOWNLOADS.md`).
+
+Both values can be tuned with the environment variable or a number (seconds)
+in the AppMan config directory: `~/.config/appman/appman-update-timeout` and
+`~/.config/appman/appman-curl-maxtime`.
 
 ## How results are computed
 
