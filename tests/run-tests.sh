@@ -34,7 +34,7 @@ ko()   { FAIL=$((FAIL+1)); printf '  ✗ %s\n' "$*"; }
 
 cleanup() {
 	[ -n "${SRV_PID:-}" ] && kill "$SRV_PID" 2>/dev/null
-	rm -rf "$WORK"
+	[ -n "${KEEP:-}" ] && cp -r "$WORK" /tmp/opencode/keepwork 2>/dev/null; rm -rf "$WORK" 2>/dev/null
 }
 trap cleanup EXIT
 
@@ -103,6 +103,7 @@ printf 'fake binary v1\n' > "$WORK/serverdl/tapp-update-1.0.AppImage"
 printf 'fake binary v2\n' > "$WORK/serverdl/tapp-update-2.0.AppImage"
 printf 'fake fail binary\n' > "$WORK/serverdl/tapp-fail-1.0.AppImage"
 printf 'fake noupdate binary\n' > "$WORK/serverdl/tapp-noupdate-1.0.AppImage"
+printf 'fake selfup binary\n' > "$WORK/serverdl/tapp-selfup-1.0.AppImage"
 printf '\x7fELF\x00\x00\x00\x00AIgh-releases-zsync-embedded' > "$WORK/serverdl/tapp-auto-1.0.AppImage"
 
 # ---------------------------------------------------------------------------
@@ -167,12 +168,28 @@ make_app tapp-noupdate "1.0" ':'
 
 make_app tapp-auto "1.0" ':'   # AppImage with embedded update info, no AM-updater
 
+# tapp-selfup: self-updatable app shipping its OWN 'updater' script
+make_app tapp-selfup "1.0" 'cat > ./updater <<-AM
+#!/bin/sh
+APP=tapp-selfup
+version0=\$(cat "/opt/\$APP/version")
+if [ "\$version0" = "2.0" ]; then echo "selfup already current"; exit 0; fi
+mkdir "/opt/\$APP/tmp" && cd "/opt/\$APP/tmp" || exit 1
+wget -q "$BASE/dl/tapp-current-1.0.AppImage" -O "../\$APP" || exit 1
+cd ..
+rm -R -f ./tmp
+echo "2.0" > ./version
+exit 0
+AM
+chmod a+x ./updater'
+
 cat > "$WORK/appsrepo/programs/x86_64-apps" <<LIST
 ◆ tapp-current : Test current : https://example.test : $BASE/dl/tapp-current-1.0.AppImage : 1.0
 ◆ tapp-update : Test update : https://example.test : $BASE/dl/tapp-update-1.0.AppImage : 1.0
 ◆ tapp-fail : Test fail : https://example.test : $BASE/dl/tapp-update-1.0.AppImage : 1.0
 ◆ tapp-noupdate : Test no-update : https://example.test : $BASE/dl/tapp-current-1.0.AppImage : 1.0
 ◆ tapp-auto : Test auto : https://example.test : $BASE/dl/tapp-auto-1.0.AppImage : 1.0
+◆ tapp-selfup : Test self-updatable : https://example.test : $BASE/dl/tapp-current-1.0.AppImage : 1.0
 LIST
 
 # ---------------------------------------------------------------------------
@@ -195,8 +212,14 @@ cp "$APPMAN" "$HOME/.local/bin/appman"
 say ""
 say "== 1. Configuration compatibility =="
 AM2="$HOME/.local/bin/appman"
-"$AM2" -y -i tapp-current tapp-update tapp-fail tapp-noupdate tapp-auto > "$WORK/install.log" 2>&1
-[ "$(grep -c 'INSTALLED' "$WORK/install.log")" -eq 5 ] && ok "5 apps installed (uses existing AppMan config)" || ko "install failed"
+"$AM2" -y -i tapp-current tapp-update tapp-fail tapp-noupdate tapp-auto tapp-selfup > "$WORK/install.log" 2>&1
+if [ "$(grep -c 'INSTALLED' "$WORK/install.log")" -eq 6 ]; then
+	ok "6 apps installed (uses existing AppMan config)"
+else
+	ko "install failed"
+	echo "----- install.log tail -----" >&2
+	tail -25 "$WORK/install.log" >&2
+fi
 [ -f "$XDG_CONFIG_HOME/appman/appman-config" ] && ok "appman-config reused (no AppMan2 config dir)" || ko "config missing"
 [ ! -d "$XDG_CONFIG_HOME/appman2" ] && ok "no separate AppMan2 config directory created" || ko "unexpected AppMan2 config dir"
 
@@ -208,6 +231,13 @@ grep -q "TAPP-CURRENT — already up to date" "$WORK/update.log" && ok "tapp-cur
 grep -q "TAPP-FAIL — update FAILED" "$WORK/update.log" && ok "tapp-fail reported FAILED" || ko "tapp-fail wrong"
 grep -q "TAPP-NOUPDATE — no supported update mechanism" "$WORK/update.log" && ok "tapp-noupdate reported unsupported" || ko "tapp-noupdate wrong"
 [ "$(cat "$WORK/apps/tapp-update/version")" = "2.0" ] && ok "tapp-update was ACTUALLY updated" || ko "tapp-update not really updated"
+
+say ""
+say "== 2b. Self-updatable apps (own 'updater' script) are included =="
+grep -q "Checking TAPP-SELFUP" "$WORK/update.log" && ok "self-updatable app is being checked" || ko "self-updatable app not checked"
+grep -q "TAPP-SELFUP — UPDATED 1.0 → 2.0" "$WORK/update.log" && ok "self-updatable app updated via its own updater" || ko "self-updatable app not updated"
+[ "$(cat "$WORK/apps/tapp-selfup/version")" = "2.0" ] && ok "self-updatable app version actually bumped" || ko "self-updatable app version not bumped"
+grep -q "intentional failure" "$WORK/update.log" && ok "download difficulty is surfaced for failed update" || ko "failed update reason not shown"
 
 say ""
 say "== 3. Automatic AppImage update (embedded update info) =="

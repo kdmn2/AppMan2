@@ -2324,9 +2324,10 @@ _use_verify() {
 ################################################################################################################################################################
 
 _update_updatable_apps_msg_head() {
-	printf $" %b\"%b\" CAN MANAGE UPDATES FOR THE FOLLOWING PROGRAMS\033[0m:\n%b\n\n" "${Gold}" "$AMCLIUPPER" "$DIVIDING_LINE"
+	printf $" %b\"%b\" is checking ALL installed applications for updates\033[0m\n%b\n" "${Gold}" "$AMCLIUPPER" "$DIVIDING_LINE"
+	printf $" The following apps are managed through an \"AM-updater\" script:\n\n"
 	[ -f "$AMCACHEDIR/updatable-args-list" ] && grep "◆" "$AMCACHEDIR/updatable-args-list" | sort | sed 's/\([✖✓🔒]\)/ \1/g' || echo $" None"
-	printf $"\n %bAll self-updatable programs are excluded\033[0m\n" "${RED}"
+	printf $"\n %bApps with their own update mechanism are checked as well\033[0m\n" "${Green}"
 	echo "$DIVIDING_LINE"
 }
 
@@ -2424,10 +2425,14 @@ _update_app() {
 }
 
 # APPMAN2: detect whether an installed binary is an AppImage carrying
-# embedded update information (usable by AppImageUpdate / zsync delta tools).
+# embedded update information (usable by AppImageUpdate / zsync delta tools),
+# or ships an AppImageUpdate-style "updater.ini" file.
 _app_has_embedded_updateinfo() {
 	local appbin="$1"
 	[ -f "$appbin" ] || return 1
+	if [ -f "$(dirname "$appbin")/updater.ini" ]; then
+		return 0
+	fi
 	if ! head -c10 "$appbin" 2>/dev/null | grep -qa '^.ELF....AI$'; then
 		return 1
 	fi
@@ -2479,6 +2484,25 @@ _update_classify_results() {
 	done
 }
 
+# APPMAN2: show the most relevant download/update error lines from an updater
+# log, so the user can see why an app failed (e.g. a stalled download).
+_update_show_errors() {
+	local log="$1" lines=""
+	[ -f "$log" ] || return
+	# Prefer explicit download/update error lines (progress-bar noise is
+	# stripped), e.g. a stalled download or a failed download command ...
+	lines=$(sed 's/\r/\n/g' "$log" 2>/dev/null \
+		| grep -aiE "stalled|dropped|✖|💀|error|failed|fail|404|not found|refused|unable|cannot|timed ?out|wget:|curl:" \
+		| grep -aviE "checksum cannot be verified" \
+		| sed 's/^[ .0-9KM]*//' \
+		| tail -2)
+	# ... otherwise fall back to the last meaningful line of the log.
+	if [ -z "$lines" ]; then
+		lines=$(sed 's/\r/\n/g' "$log" 2>/dev/null | grep -a . | grep -avE '^[ .0-9KM]*$' | tail -1)
+	fi
+	[ -n "$lines" ] && printf "%s\n" "$lines" | sed 's/^/      ↳ /'
+}
+
 # APPMAN2: print per-app update status and a final summary, clearly
 # separating apps that were merely CHECKED from apps actually UPDATED.
 _update_report_results() {
@@ -2496,6 +2520,7 @@ _update_report_results() {
 					;;
 				failed)
 					printf $" %b✖\033[0m %b — update FAILED\n" "${RED}" "$up"
+					_update_show_errors "$AMCACHEDIR/update-log-$uarg"
 					;;
 				read-only)
 					printf $" %b✖\033[0m %b — cannot update, read-only\n" "${RED}" "$up"
@@ -2507,7 +2532,7 @@ _update_report_results() {
 					printf $" - %b — no supported update mechanism\n" "$up"
 					;;
 				unsupported-tool)
-					printf $" - %b — unsupported (install \"appimageupdatetool\" for auto updates)\n" "$up"
+					printf $" - %b — supports auto-updates, but install \"appimageupdatetool\" first\n" "$up"
 					;;
 			esac
 		done
@@ -2538,8 +2563,20 @@ _update_all_apps() {
 			cd "$argpath" || exit 1
 			arg=$(printf '%s\n' "${PWD##*/}")
 			argpath="$PWD"
+			up=$(echo "$arg" | tr '[:lower:]' '[:upper:]')
+			if [ -f "$argpath"/AM-updater ] || [ -f "$argpath"/updater ] || [ -f "$argpath"/AM-LOCK ]; then
+				printf $" %b◆\033[0m Checking %b...\n" "${LightBlue}" "$up"
+			fi
 			if [ -f "$argpath"/AM-updater ]; then
 				_update_app
+			elif [ -f "$argpath"/updater ]; then
+				# Self-updatable app shipping its own updater script
+				if [ -x "$argpath/updater" ]; then
+					( "$argpath"/updater >"$AMCACHEDIR/update-log-$arg" 2>&1
+					  echo "$?" > "$AMCACHEDIR/update-exit-$arg" ) &
+				else
+					echo "unsupported|$arg" >> "$AMCACHEDIR/update-results"
+				fi
 			elif [ -f "$argpath"/AM-LOCK ]; then
 				echo "skip-locked|$arg" >> "$AMCACHEDIR/update-results"
 			elif [ "$arg" = "$AMCLI" ]; then
@@ -2634,9 +2671,16 @@ _use_update() {
 		for arg in $ENTRIES; do
 			argpath_items=$(echo "$ARGPATHS" | grep "/$arg$" | xargs)
 			for argpath in $argpath_items; do
-				if [ -f "$argpath"/AM-updater ]; then
+				if [ -f "$argpath"/AM-updater ] || [ -f "$argpath"/updater ]; then
 					cd "$argpath" 2>/dev/null || exit 1
-					_update_app
+					up=$(echo "$arg" | tr '[:lower:]' '[:upper:]')
+					printf $" %b◆\033[0m Checking %b...\n" "${LightBlue}" "$up"
+					if [ -f "$argpath"/AM-updater ]; then
+						_update_app
+					else
+						( "$argpath"/updater >"$AMCACHEDIR/update-log-$arg" 2>&1
+						  echo "$?" > "$AMCACHEDIR/update-exit-$arg" ) &
+					fi
 				elif [ ! -d "$argpath" ]; then
 					printf $" %b✖\033[0m %b cannot be updated, program not found \n" "${RED}" "$(echo "$arg" | tr '[:lower:]' '[:upper:]')"
 				elif [ -f "$argpath"/AM-LOCK ]; then

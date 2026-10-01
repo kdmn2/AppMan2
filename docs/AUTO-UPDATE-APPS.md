@@ -19,16 +19,21 @@ For every installed app, `appman -u`:
 1. If the app has an **`AM-updater`** script → run it (AppMan's normal
    behaviour). Most of these scripts already perform an AppImage delta update
    when `appimageupdatetool` is installed.
-2. Else if the app has an **`AM-LOCK`** file → *skipped (locked)*.
-3. Else if the app is an **AppImage with embedded update information** (an
+2. Else if the app ships its own **`updater`** script (a self-updatable app)
+   → run that script.
+3. Else if the app has an **`AM-LOCK`** file → *skipped (locked)*.
+4. Else if the app is an **AppImage with embedded update information** (an
    ELF/AppImage header containing markers such as `gh-releases-zsync`,
-   `zsync`, `bintray`, `updateinformation`, `AppImageUpdate`) and no
-   `AM-updater`:
+   `zsync`, `bintray`, `updateinformation`, `AppImageUpdate`) or ships an
+   AppImageUpdate-style **`updater.ini`** file:
    * if `appimageupdatetool` is installed → run `appimageupdatetool -Or`;
    * else if `appimageupdate` is installed → run it;
    * else if `zsync` is installed and a `.zsync` file is present → run it;
-   * else → *unsupported (install "appimageupdatetool" for auto updates)*.
-4. Otherwise → *no supported update mechanism*.
+   * else → *supports auto-updates, but install "appimageupdatetool" first*.
+5. Otherwise → *no supported update mechanism*.
+
+Self-updatable apps are therefore **included** in `appman -u` — they are no
+longer excluded from the update process.
 
 Embedded-update detection is done by inspecting the AppImage binary itself
 (`_app_has_embedded_updateinfo`), the same information AppImageUpdate uses.

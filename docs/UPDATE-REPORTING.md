@@ -3,6 +3,18 @@
 AppMan2 tracks the **actual result** of every update operation and reports it
 per application, so a *check* is never presented as an *update*.
 
+## What is checked
+
+`appman2 -u` checks **all installed applications** — not only apps managed
+through an `AM-updater` script, but also:
+
+* apps that ship their own **`updater`** script (self-updatable apps);
+* AppImages with embedded update information / `updater.ini` (updated through
+  `appimageupdatetool` / `appimageupdate` / `zsync`).
+
+As the update runs, AppMan2 prints a `◆ Checking <APP>...` line for every app,
+so you always see what is being examined.
+
 ## Outcome categories
 
 | Category | Meaning |
@@ -11,8 +23,28 @@ per application, so a *check* is never presented as an *update*.
 | **UPDATED `old → new`** | The updater ran successfully and the installed version actually changed. |
 | **update FAILED** | The updater exited with a non-zero status (or the app directory was read-only). |
 | **skipped (locked)** | The app has an `AM-LOCK` file (user chose to keep the current version). |
-| **no supported update mechanism** | The app has no `AM-updater` and is not an AppImage carrying embedded update information. |
-| **unsupported (install "appimageupdatetool")** | The app supports automatic updates but no AppImage delta-update tool is installed (see `docs/AUTO-UPDATE-APPS.md`). |
+| **no supported update mechanism** | The app has no `AM-updater`, no own `updater` script and no embedded update information. |
+| **supports auto-updates, but install "appimageupdatetool" first** | The app is an AppImage with embedded update info but no AppImage delta tool is installed. |
+
+## Download difficulties
+
+When an update **fails**, AppMan2 prints the relevant error lines from the
+updater log underneath the result (prefixed with `↳`), so you can see why —
+for example a stalled or dropped download:
+
+```
+ Checking applications for updates...
+
+ ◆ Checking SELFUP...
+ ◆ Checking TAPP-FAIL...
+ ◆ Checking TAPP-UPDATESTALL...
+ Checking applications for updates...
+
+ ✖ TAPP-FAIL — update FAILED
+      ↳ intentional failure while checking for updates
+ ✖ TAPP-UPDATESTALL — update FAILED
+      ↳ ✖ Download dropped: stalled (no progress for 30s) — http://…
+```
 
 ## How results are computed
 
@@ -32,6 +64,7 @@ per application, so a *check* is never presented as an *update*.
  ✔ FIREFOX — already up to date
  ✔ VLC — UPDATED 3.0.21 → 3.0.22
  ✗ FOOAPP — update FAILED
+      ↳ ✖ Download dropped: stalled (no progress for 30s) — http://…
  - BARAPP — skipped (locked)
  - NOAUTOAPP — no supported update mechanism
 
@@ -50,6 +83,6 @@ date + failed). `Skipped`/`Unsupported` cover apps that were not updated.
 
 ## Where it applies
 
-* `appman -u` / `appman -u --apps` (update everything)
-* `appman -u <app>…` (update specific apps)
-* `appman --force-latest <app>` reports `UPDATED (force-latest)` / `FAILED`.
+* `appman2 -u` / `appman2 -u --apps` (update everything)
+* `appman2 -u <app>…` (update specific apps)
+* `appman2 --force-latest <app>` reports `UPDATED (force-latest)` / `FAILED`.
