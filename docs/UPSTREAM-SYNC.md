@@ -49,7 +49,31 @@ byte-for-byte identical to their AM baselines.
   `ivan-hc/AppMan` content needed porting.
 * Because the fork never modified `management.am`, `template.am` or
   `database.am`, those files were replaced with the current AM `main`
-  versions (`database.am` had no upstream change).
+  versions.
+* `modules/database.am` **did not change**: its baseline (`e2f5fa44`,
+  2026-08-23) is still the newest AM commit touching that file, so "adopted"
+  means "identical to AM `main`" and it therefore does **not** appear in the
+  integration commit's file list. It is listed here only to document that it
+  was checked, not skipped.
+* The branch was named `integration/upstream-am-2026-10-22` after the date of
+  the newest `APP-MANAGER` change it carries (`fddad523`). The module files
+  additionally include AM changes up to `f9f7f82b1` (2026-10-24) and the
+  fetch was taken at AM `main` `a3917ac` (2026-11-01). The date in the branch
+  name is therefore a *minimum* cutoff, not the fetch date.
+
+### Why the version is 1.1-3
+
+`_sync_amcli` fetches `$APPMAN2_REPO/appman`, reads its `^AMVERSION=` line and
+compares it with the running `$AMVERSION`. If they differ, it replaces the
+running script (and `_sync_modules` refreshes the modules from
+`$APPMAN2_REPO/modules`). It does **not** use semantic ordering — any
+difference is treated as "update available". The previous release was
+`1.1-2` and this integration changes both the main script and modules, so
+`1.1-3` is the next patch release and is what makes the existing `1.1-2`
+installs update via `appman -s` / `appman -u`. A bump was mandatory here:
+without it, published `1.1-2` clients would see "already up to date" and never
+receive the port.
+
 
 ### Upstream AM commits integrated
 
@@ -94,3 +118,37 @@ AppMan2 test suite.
   preserved — see the "Preservation inventory" in the integration notes.
 * `commits.json`, `last-check.txt`, `.github` workflows: AppMan2 does not use
   the upstream generated files or cron jobs.
+
+## Verification
+
+All suites run in an isolated container with a temporary `HOME`/XDG, a local
+`http://127.0.0.1` fixture server and a local AppMan2 repo served over
+`file://`. No external services, no real app installs, no host changes.
+
+| Suite | Covers | Result |
+| --- | --- | --- |
+| `tests/run-tests.sh` | config compatibility, install/update/remove, update reporting, stalled downloads, self-update | 26/26 |
+| `tests/run-remove-tests.sh` | fuzzy-remove positive/negative/cancel: exact match, acceptance, rejection, empty/EOF, multi-candidate picker (pick/abort/invalid), normal + hard removal, unrelated files untouched | 21/21 |
+| `tests/run-fixture-tests.sh` | `_alt_gh_*`/proxy, auth headers, 200/404 downloads, AppImage icon extraction + fallback, template smoke, downgrade proxy wiring | 28/28 |
+| `tests/run-update-tests.sh` | release transition 1.1-2 → 1.1-3, source ownership, retained behavior, failed download, mixed old/new modules | 23/23 |
+
+Example (Docker, from the repo root):
+
+```sh
+docker run --rm -v "$PWD":/work:ro -v /tmp/amtest:/w -w /work ubuntu:24.04 \
+  bash -c 'apt-get update -qq && apt-get install -y -qq wget curl python3 ca-certificates >/dev/null &&
+           cp -a /work/. /w/ && cd /w && bash tests/run-tests.sh ./appman'
+```
+
+### Known limitation (upstream-inherited)
+
+`_alt_gh_filter` rewrites only when `GH_API_ALLOWED <= 5` and otherwise emits
+**nothing**, while `_downgrade` enters its proxy branch when
+`GH_API_REMAINING <= 10`. `GH_API_ALLOWED` is `GH_API_REMAINING - GH_APPS_NUMBER`,
+so for `GH_API_REMAINING` in 6..10 the filter can emit nothing and leave
+`entries_list` empty. This is upstream AM behaviour (`1a3b3733` + `fddad523`),
+recorded here for the maintainer; it is **not** changed in this integration to
+keep the port faithful. A minimal fix would make the filter pass through when
+it does not rewrite (e.g. `else cat "$@"`). See `tests/run-fixture-tests.sh`
+F8 for the probe.
+

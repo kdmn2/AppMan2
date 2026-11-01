@@ -159,6 +159,21 @@ their installed applications.
 * [docs/UPDATE-REPORTING.md](docs/UPDATE-REPORTING.md) — what "checked vs updated" means
 * [docs/AUTO-UPDATE-APPS.md](docs/AUTO-UPDATE-APPS.md) — automatic AppImage updates
 
+## Testing
+
+All suites use a temporary `HOME`/XDG, a local HTTP fixture server and a local
+AppMan2 repo over `file://` — no network, no real installs. Run from the repo
+root with `bash tests/<suite>.sh ./appman` (preferably inside a disposable
+container):
+
+* `tests/run-tests.sh` — end-to-end install/update/remove, update reporting,
+  stalled downloads, self-update.
+* `tests/run-remove-tests.sh` — fuzzy-remove positive/negative/cancel cases.
+* `tests/run-fixture-tests.sh` — proxy/`_alt_gh_*`, auth headers, download
+  failures, AppImage icon extraction, template smoke.
+* `tests/run-update-tests.sh` — release transition (1.1-2 → 1.1-3), source
+  ownership, failed downloads, mixed old/new modules.
+
 ## Git remotes (for maintainers)
 
 * `origin` → your AppMan2 repository (the runtime self-update source).
