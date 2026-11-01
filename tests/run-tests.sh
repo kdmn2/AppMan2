@@ -315,5 +315,36 @@ say "== 6. Remove =="
 [ ! -d "$WORK/apps/tapp-slow" ] && ok "app removed" || ko "remove failed"
 
 say ""
+say "== 7. Remove suggests installed apps on a near-miss name (upstream #2797) =="
+# tapp-current is still installed at this point. Removing it with a typo must
+# offer the similar installed name and remove it when accepted.
+printf 'y\ny\n' | "$AM2" -R tapp-curren > "$WORK/remove-suggest.log" 2>&1
+grep -qi 'tapp-current' "$WORK/remove-suggest.log" && ok "near-miss remove suggested tapp-current" || ko "no suggestion shown"
+[ ! -d "$WORK/apps/tapp-current" ] && ok "near-miss remove removed the suggested app" || ko "suggested app not removed"
+
+say ""
+say "== 8. Exact-match name collision notice (shared install/remove helper) =="
+# Add an app literally named "tapp" that is a prefix of all other tapp-* apps.
+cat > "$WORK/appsrepo/programs/x86_64/tapp" <<SCRIPT
+#!/bin/sh
+APP=tapp
+mkdir -p "/opt/\$APP/tmp" "/opt/\$APP/icons" && cd "/opt/\$APP/tmp" || exit 1
+printf '#!/bin/sh\nset -e\nrm -f /usr/local/bin/tapp\nrm -R -f /opt/tapp\n' > ../remove
+chmod a+x ../remove || exit 1
+wget -q "$BASE/dl/tapp-current-1.0.AppImage" -O "\$APP" || exit 1
+cd ..
+mv ./tmp/"\$APP" ./"\$APP"
+chmod a+x ./"\$APP" || exit 1
+echo "1.0" > ./version
+rm -R -f ./tmp || exit 1
+ln -s "/opt/\$APP/\$APP" "/usr/local/bin/tapp"
+SCRIPT
+chmod +x "$WORK/appsrepo/programs/x86_64/tapp"
+printf '◆ tapp : Test collision : https://example.test : %s/dl/tapp-current-1.0.AppImage : 1.0\n' "$BASE" >> "$WORK/appsrepo/programs/x86_64-apps"
+"$AM2" -s > /dev/null 2>&1   # refresh lists so the new app is known
+"$AM2" -y -i tapp > "$WORK/collision.log" 2>&1
+grep -qi 'also matches' "$WORK/collision.log" && ok "exact-match collision notice shown" || ko "collision notice missing"
+
+say ""
 say "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

@@ -153,6 +153,7 @@ their installed applications.
 
 * [docs/APPMAN-ARCHITECTURE.md](docs/APPMAN-ARCHITECTURE.md) — how the original AppMan works
 * [docs/APPMAN2-SELF-UPDATE.md](docs/APPMAN2-SELF-UPDATE.md) — AppMan2's own update source
+* [docs/UPSTREAM-SYNC.md](docs/UPSTREAM-SYNC.md) — which upstream AM revision each file was synced from
 * [docs/APPMAN-COMPATIBILITY.md](docs/APPMAN-COMPATIBILITY.md) — shared config/state paths
 * [docs/STALLED-DOWNLOADS.md](docs/STALLED-DOWNLOADS.md) — stalled-download detection
 * [docs/UPDATE-REPORTING.md](docs/UPDATE-REPORTING.md) — what "checked vs updated" means

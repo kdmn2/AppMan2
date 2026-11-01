@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-AMVERSION="1.1-2"
+AMVERSION="1.1-3"
 
 ##############################################################################
 # AppMan2 program identity
@@ -837,18 +837,15 @@ _determine_args() {
 _determine_argpath() {
 	argpath_number=$(echo "$ARGPATHS" | grep "/$arg$" | wc -l)
 	if [ "$argpath_number" = 2 ]; then
-		argpath_items=$(echo "$ARGPATHS" | grep "/$arg$" | xargs)
-		printf " Detected multiple paths, please choose one:\n\n"
-		i=1
-		echo "$(for p in $argpath_items; do
-			printf "   %2d. %s	" "$i" "$p"
-			i=$((i + 1))
-		done)" | _fit
-		printf "\n"
-		_read " Type a number and press ENTER: " choice
-		choice=$(echo "$argpath_items" | awk '{print $'"$choice"'}')
-		argpath="$choice"
-		[ ! -d "$argpath" ] && printf "\n 💀 ERROR, invalid selection! \n\n" && argpath=""
+		mapfile -t DID_YOU_MEAN_CANDIDATES < <(echo "$ARGPATHS" | grep "/$arg$")
+		DID_YOU_MEAN_CANDIDATE_FLAGS=()
+		_print_did_you_mean_candidates " Detected multiple paths, choose one or press ZERO to abort:"
+		if _select_did_you_mean_candidate choice; then
+			argpath="$DID_YOU_MEAN"
+		else
+			printf " 💀 ERROR, invalid selection! \n\n"
+			argpath=""
+		fi
 	else
 		argpath=$(echo "$ARGPATHS" | grep "/$arg$")
 	fi
@@ -1740,7 +1737,7 @@ _validate_github_token() {
 _use_apikey() {
 	case $2 in
 	'del'|'delete'|'remove')
-		[ -f "$ghapikey_file" ] || { echo $" ✖ No file named $ghapikey_file has been found"; exit 1; }
+		[ -f "$ghapikey_file" ] || echo $" ✖ No file named $ghapikey_file has been found"
 		# Remove token references from all updater files before deleting the token file
 		for arg in $ARGS; do
 			argpath_items=$(echo "$ARGPATHS" | grep "/$arg$" | xargs)
@@ -1751,7 +1748,7 @@ _use_apikey() {
 				fi
 			done
 		done
-		rm -f "$ghapikey_file" && echo $" ✔ $ghapikey_file has been removed"
+		[ -f "$ghapikey_file" ] && rm -f "$ghapikey_file" && echo $" ✔ $ghapikey_file has been removed"
 		echo $" ✔ Authorization headers removed from updater files"
 		exit 0
 	esac
@@ -2372,6 +2369,28 @@ _update_list_updatable_apps() {
 
 [ -z "$ALT_GH" ] && ALT_GH="https://api.gh.pkgforge.dev"
 
+# Informs the user that the alternative GitHub API host (the "proxy") is
+# being used, so that a slower API is not a surprise.
+_proxy_enabled_msg() {
+	[ -z "$HeaderAuthWithGITPAT" ] && echo "" && echo "Proxy enabled!" | _fit && echo ""
+}
+
+# Centralized handling of the alternative GitHub API host.
+_alt_gh_on() {
+	sed -i "s#https://api.github.com#$ALT_GH#g" "$@"
+}
+
+_alt_gh_off() {
+	sed -i "s#$ALT_GH#https://api.github.com#g" "$@"
+}
+
+_alt_gh_filter() {
+	_update_determine_gh_apps_number
+	if [ "$GH_API_ALLOWED" -le 5 ]; then
+		sed "s#https://api.github.com#$ALT_GH#g" "$@"
+	fi
+}
+
 # APPMAN2: bound every network operation and every per-app updater so that a
 # hung download, API call or updater can never block the whole update run.
 #   * APPMAN_UPDATE_TIMEOUT (default 3600s): per-app updater budget.
@@ -2412,6 +2431,7 @@ _update_determine_gh_apps_number() {
 	if [ -n "$GH_APPS_NUMBER" ]; then
 		GH_API_REMAINING=$(_use_online_reading_tool "https://api.github.com/rate_limit" | tr '{,' '\n' | grep -i remaining | tail -1 | grep -Eo "[0-9]*")
 		GH_API_ALLOWED=$((GH_API_REMAINING - GH_APPS_NUMBER))
+		[ -z "$HeaderAuthWithGITPAT" ] && [ "$GH_API_ALLOWED" -le 5 ] && _proxy_enabled_msg
 	fi
 }
 
@@ -2434,7 +2454,7 @@ _update_run_updater() {
 	fi
 	if grep -q "api.github.com" "$argpath"/AM-updater; then
 		if [ "$GH_API_ALLOWED" -le 5 ]; then
-			sed -i "s#https://api.github.com#$ALT_GH#g" "$argpath"/AM-updater
+			_alt_gh_on "$argpath"/AM-updater
 		fi
 	fi
 	if grep -sq "Checksum failure" "$argpath"/AM-VERIFIED; then
@@ -2451,7 +2471,7 @@ _update_run_updater() {
 	if [ "$updater_exit" = "124" ]; then
 		echo "AppMan2: ⚠️ update timed out after ${APPMAN_UPDATE_TIMEOUT}s (hung download or API call)" >> "$updater_log"
 	fi
-	sed -i "s#$ALT_GH#https://api.github.com#g" "$argpath"/AM-updater 2>/dev/null
+	_alt_gh_off "$argpath"/AM-updater 2>/dev/null
 	checksum_msg=$(_use_verify | xargs 2>/dev/null)
 	[ -n "$checksum_msg" ] && echo "AppMan2: $checksum_msg" >> "$updater_log"
 	echo "$updater_exit" > "$AMCACHEDIR/update-exit-$arg"
@@ -2782,6 +2802,153 @@ _use_force_latest() {
 ################################################################################################################################################################
 
 # HANDLE ALL THE EXTERNAL MODULES
+################################################################################
+#			DID YOU MEAN (FUZZY SUGGEST)
+#
+# These helpers live in the main script (not in a module) because they are
+# shared by the "install" module and by the "remove" implementation in
+# "management.am".
+################################################################################
+
+_levenshtein() {
+	local s="$1" t="$2"
+	local sl=${#s} tl=${#t}
+	local i j sc min del ins sub
+	local -a d
+	for ((i=0; i<=sl; i++)); do d[i*(tl+1)]=$i; done
+	for ((j=0; j<=tl; j++)); do d[j]=$j; done
+	for ((i=1; i<=sl; i++)); do
+		for ((j=1; j<=tl; j++)); do
+			sc=0; [ "${s:i-1:1}" != "${t:j-1:1}" ] && sc=1
+			del=$(( d[(i-1)*(tl+1)+j] + 1 ))
+			ins=$(( d[i*(tl+1)+j-1] + 1 ))
+			sub=$(( d[(i-1)*(tl+1)+j-1] + sc ))
+			min=$del; [ $ins -lt $min ] && min=$ins; [ $sub -lt $min ] && min=$sub
+			d[i*(tl+1)+j]=$min
+		done
+	done
+	echo "${d[sl*(tl+1)+tl]}"
+}
+
+# Prints the numbered picker for DID_YOU_MEAN_CANDIDATES. Shared by
+# _did_you_mean, _check_arg_variants and the multiple-install-path picker.
+_print_did_you_mean_candidates() {
+	printf "\n"
+	if [ -n "$1" ]; then
+		printf " %s\n\n" "$1"
+	else
+		printf $" Detected multiple variants, choose one or press ZERO to abort:\n\n"
+	fi
+	local i=1 flag match
+	for match in "${DID_YOU_MEAN_CANDIDATES[@]}"; do
+		flag="${DID_YOU_MEAN_CANDIDATE_FLAGS[$((i-1))]}"
+		if [ -n "$flag" ]; then
+			printf "  %2d) %b%s\033[0m (--%s)\n" "$i" "${LightBlue}" "$match" "$flag"
+		else
+			printf "  %2d) %b%s\033[0m\n" "$i" "${LightBlue}" "$match"
+		fi
+		i=$((i+1))
+	done
+	printf "\n"
+}
+
+# Prints the app names of one database list (apps, appimages, or a 3rd-party one).
+_did_you_mean_list_names() {
+	[ -f "$AMDATADIR/$ARCH-$1" ] && grep "^◆ " "$AMDATADIR/$ARCH-$1" | sed 's/^◆ //;s/ :.*$//'
+}
+
+# Suggests app names close to $1. $2 limits the search to one 3rd-party list,
+# or to the installed apps when it is "installed".
+_did_you_mean() {
+	local input="${1,,}" only_flag="$2"
+	local match="" match_flag="" input_len=${#input} first_char="${input:0:1}" best_dist=3 diff dist
+	local -a sub_names=() sub_flags=()
+	DID_YOU_MEAN=""
+	DID_YOU_MEAN_FLAG=""
+	DID_YOU_MEAN_CANDIDATES=()
+	DID_YOU_MEAN_CANDIDATE_FLAGS=()
+
+	_did_you_mean_search() {
+		local names="$1" name_orig
+		[ -z "$names" ] && return
+		[ "$best_dist" -eq 0 ] && return
+		while IFS= read -r name_orig; do
+			[ -z "$name_orig" ] && continue
+			local name="${name_orig,,}"
+			[ "$name" = "$input" ] && [ -n "$2" ] && best_dist=0 && match=$name_orig && match_flag="$2" && return
+			if [ "$input_len" -ge 4 ]; then
+				case "$name" in
+					*"$input"*)
+						sub_names+=("$name_orig")
+						sub_flags+=("$2")
+						continue
+						;;
+				esac
+			fi
+			diff=$(( ${#name} - input_len ))
+			[ $diff -lt 0 ] && diff=$(( -diff ))
+			[ $diff -gt 2 ] && continue
+			[ "${name:0:1}" != "$first_char" ] && continue
+			dist=$(_levenshtein "$input" "$name")
+			if [ "$dist" -lt "$best_dist" ]; then
+				best_dist=$dist
+				match=$name_orig
+				match_flag="$2"
+			fi
+		done <<< "$names"
+	}
+
+	if [ "$only_flag" = installed ]; then
+		_did_you_mean_search "$(echo "$ARGPATHS" | sed 's:.*/::' | sort -u)" ""
+	elif [ -n "$only_flag" ]; then
+		_did_you_mean_search "$(_did_you_mean_list_names "$only_flag")" "$only_flag"
+	else
+		_did_you_mean_search "$(_did_you_mean_list_names apps)" ""
+		for tp_list in $third_party_lists; do
+			_did_you_mean_search "$(_did_you_mean_list_names "$tp_list")" "$tp_list"
+		done
+	fi
+
+	if [ "$best_dist" -ne 0 ] && [ "${#sub_names[@]}" -gt 0 ] && [ "${#sub_names[@]}" -le 15 ]; then
+		if [ "${#sub_names[@]}" -eq 1 ]; then
+			match="${sub_names[0]}"
+			match_flag="${sub_flags[0]}"
+			best_dist=1
+		else
+			DID_YOU_MEAN_CANDIDATES=("${sub_names[@]}")
+			DID_YOU_MEAN_CANDIDATE_FLAGS=("${sub_flags[@]}")
+		fi
+	fi
+
+	if [ "${#DID_YOU_MEAN_CANDIDATES[@]}" -gt 0 ]; then
+		_print_did_you_mean_candidates
+	elif [ -n "$match" ]; then
+		if [ "$best_dist" -eq 0 ] && [ -n "$match_flag" ]; then
+			printf $"\n \"%b%b\033[0m\" is not in the main database, but found in --%b%b\033[0m.\n" "${LightBlue}" "$match" "${LightBlue}" "$match_flag"
+		else
+			printf $"\n Did you mean \"%b%b\033[0m\"?\n" "${LightBlue}" "$match"
+		fi
+		DID_YOU_MEAN="$match"
+		DID_YOU_MEAN_FLAG="$match_flag"
+	fi
+}
+
+_select_did_you_mean_candidate() {
+	# $1 is the variable _read stores the answer in ("choice" defaults to 1 with -y)
+	local pick_var="${1:-choice_abort}" choice_abort choice pick
+	_read $" Type a number and press ENTER: " "$pick_var"
+	pick="${!pick_var}"
+	echo ""
+	case "$pick" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	[ "$pick" -eq 0 ] && return 1
+	[ "$pick" -lt 1 ] || [ "$pick" -gt "${#DID_YOU_MEAN_CANDIDATES[@]}" ] && return 1
+	DID_YOU_MEAN="${DID_YOU_MEAN_CANDIDATES[$((pick-1))]}"
+	DID_YOU_MEAN_FLAG="${DID_YOU_MEAN_CANDIDATE_FLAGS[$((pick-1))]}"
+	return 0
+}
+
 _use_module() {
 	# Test if module exists
 	if [ ! -f "$MODULES_PATH/$MODULE" ] && [ -f "$APPMANCONFIG/appman-mode" ] && { [ "$CLI" = am ] || [ "$CLI" = APP-MANAGER ]; }; then
