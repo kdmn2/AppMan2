@@ -2384,10 +2384,16 @@ _alt_gh_off() {
 	sed -i "s#$ALT_GH#https://api.github.com#g" "$@"
 }
 
+# AppMan2 fork fix: this helper must PRESERVE its input when the alternate
+# host is not being used. Upstream emits nothing in that case, so a caller
+# that pipes a list through it (e.g. _downgrade) would silently get an empty
+# result whenever the proxy is not actually active. Accepts stdin or files.
 _alt_gh_filter() {
 	_update_determine_gh_apps_number
-	if [ "$GH_API_ALLOWED" -le 5 ]; then
+	if [ -n "$GH_API_ALLOWED" ] && [ "$GH_API_ALLOWED" -le 5 ]; then
 		sed "s#https://api.github.com#$ALT_GH#g" "$@"
+	else
+		cat "$@"
 	fi
 }
 

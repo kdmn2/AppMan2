@@ -117,38 +117,60 @@ AppMan2 test suite.
   automatic AppImage updates, update timeouts, `appman2` name support) are
   preserved — see the "Preservation inventory" in the integration notes.
 * `commits.json`, `last-check.txt`, `.github` workflows: AppMan2 does not use
-  the upstream generated files or cron jobs.
+  the upstream generated files or cron jobs (AppMan2 has its own `tests.yml`
+  and release workflow).
+
+## Fork fixes applied on top of upstream
+
+These are deliberate AppMan2 changes to upstream-derived lines, made for
+safety and correctness (not part of the upstream port):
+
+1. **`modules/management.am` — `_check_installed_arg`.** Substituting a
+   *different* installed app for an unknown name now requires an explicit
+   affirmative answer (`y`/`Y`/`yes`). Empty input, EOF, invalid and negative
+   answers all cancel. The `yn_abort` variable name keeps the `-y` protection
+   (its default is `n`). Upstream accepted any answer that did not start with
+   `n`, so an empty/EOF answer would remove an app other than the one asked
+   for. Applies to both `_remove` and `_hard_remove`.
+
+2. **`appman` — `_alt_gh_filter`.** When not rewriting (quota healthy or
+   `GH_API_ALLOWED` unset) the function now preserves its input (`cat "$@"`)
+   instead of emitting nothing. Upstream emitted nothing, so `_downgrade`'s
+   `_downgrade_entries_filter | _alt_gh_filter` could yield an empty URL list
+   when `GH_API_REMAINING` was in 6..10. Supports stdin and filename input.
+   See `tests/run-fixture-tests.sh` F1 and F8.
 
 ## Verification
 
 All suites run in an isolated container with a temporary `HOME`/XDG, a local
 `http://127.0.0.1` fixture server and a local AppMan2 repo served over
-`file://`. No external services, no real app installs, no host changes.
+`file://`. They run with `--network none` (no live APIs), perform no real
+installs and need no credentials. Each also supplies a cached `am-extras`
+fixture so `$third_party_flags` is set offline (see the note in
+`tests/run-tests.sh`).
+
+Per-file syntax check (a single `bash -n f1 f2 …` parses only `f1`):
+
+```sh
+bash tests/syntax-check.sh
+```
 
 | Suite | Covers | Result |
 | --- | --- | --- |
 | `tests/run-tests.sh` | config compatibility, install/update/remove, update reporting, stalled downloads, self-update | 26/26 |
-| `tests/run-remove-tests.sh` | fuzzy-remove positive/negative/cancel: exact match, acceptance, rejection, empty/EOF, multi-candidate picker (pick/abort/invalid), normal + hard removal, unrelated files untouched | 21/21 |
-| `tests/run-fixture-tests.sh` | `_alt_gh_*`/proxy, auth headers, 200/404 downloads, AppImage icon extraction + fallback, template smoke, downgrade proxy wiring | 28/28 |
-| `tests/run-update-tests.sh` | release transition 1.1-2 → 1.1-3, source ownership, retained behavior, failed download, mixed old/new modules | 23/23 |
+| `tests/run-remove-tests.sh` | fuzzy-remove positive/negative/cancel: exact match, acceptance, rejection, empty/EOF/invalid, multi-candidate picker (pick/abort/invalid), normal + hard removal, `-y` protection, unrelated files untouched | 27/27 |
+| `tests/run-fixture-tests.sh` | `_alt_gh_*`/proxy boundaries, auth headers, 200/404 downloads, AppImage icon extraction + fallback, template smoke, downgrade proxy case | 34/34 |
+| `tests/run-update-tests.sh` | release transition 1.1-2 → 1.1-3 (genuine previous release from git), source ownership, retained behavior, failed download, mixed old/new modules incl. a real install | 25/25 |
 
-Example (Docker, from the repo root):
+**Total: 112/112** using `--network none`. CI runs the same in
+`.github/workflows/tests.yml` (`docker run --network none`).
 
-```sh
-docker run --rm -v "$PWD":/work:ro -v /tmp/amtest:/w -w /work ubuntu:24.04 \
-  bash -c 'apt-get update -qq && apt-get install -y -qq wget curl python3 ca-certificates >/dev/null &&
-           cp -a /work/. /w/ && cd /w && bash tests/run-tests.sh ./appman'
-```
+### Known limitation
 
-### Known limitation (upstream-inherited)
+The mixed-version test (`U4`) retains a genuine older `install.am` (from the
+previous release) and proves a real install still works and the manager stays
+consistent. It does **not** prove that every possible old/new module
+combination is compatible; module interfaces are still coupled to the main
+script version.
 
-`_alt_gh_filter` rewrites only when `GH_API_ALLOWED <= 5` and otherwise emits
-**nothing**, while `_downgrade` enters its proxy branch when
-`GH_API_REMAINING <= 10`. `GH_API_ALLOWED` is `GH_API_REMAINING - GH_APPS_NUMBER`,
-so for `GH_API_REMAINING` in 6..10 the filter can emit nothing and leave
-`entries_list` empty. This is upstream AM behaviour (`1a3b3733` + `fddad523`),
-recorded here for the maintainer; it is **not** changed in this integration to
-keep the port faithful. A minimal fix would make the filter pass through when
-it does not rewrite (e.g. `else cat "$@"`). See `tests/run-fixture-tests.sh`
-F8 for the probe.
 

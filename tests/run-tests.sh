@@ -205,7 +205,12 @@ sed -i 's/^AMVERSION="[^"]*"/AMVERSION="99.0-1"/' "$WORK/appman2repo/appman"
 printf '%s\n' "$WORK/apps" > "$XDG_CONFIG_HOME/appman/appman-config"
 touch "$XDG_DATA_HOME/AM/disable-dependencies-prompt"
 printf '%s\n' "$WORK/appsrepo" > "$XDG_DATA_HOME/AM/newrepo-on"
-printf '4\n' > "$XDG_CONFIG_HOME/appman/appman-stall-timeout"   # short stall timeout
+printf '4\n' > "$XDG_CONFIG_HOME/appman/appman-stall-timeout"
+# A cached 'am-extras' (normally fetched once from the network). Without it,
+# $third_party_flags is empty and install.am's dispatch grep matches every
+# arg, misrouting local installs to the 3rd-party handler. This is a
+# pre-existing AM behaviour; the tests supply a local fixture to stay offline.
+printf '# AppMan2 test fixture\nthird_party_flags="soarpkg"\n' > "$XDG_DATA_HOME/AM/am-extras"   # short stall timeout
 
 cp "$APPMAN" "$HOME/.local/bin/appman"
 

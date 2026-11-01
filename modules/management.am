@@ -572,10 +572,17 @@ _check_installed_arg() {
 	if [ "${#DID_YOU_MEAN_CANDIDATES[@]}" -gt 0 ]; then
 		_select_did_you_mean_candidate || return 1
 	elif [ -n "$DID_YOU_MEAN" ]; then
+		# Substituting a *different* installed app must be explicitly
+		# confirmed. Empty input, EOF, invalid answers and any negative
+		# answer all cancel. The variable name "yn_abort" keeps the -y
+		# protection: _read still defaults it to "n" under -y.
 		local yn_abort
-		_read $" Use \"$DID_YOU_MEAN\" instead? (Y/n) " yn_abort
+		_read $" Use \"$DID_YOU_MEAN\" instead? (y/N) " yn_abort
 		echo ""
-		echo "$yn_abort" | grep -qi '^n' && return 1
+		case "$yn_abort" in
+			y|Y|yes|Yes|YES) ;;
+			*) return 1 ;;
+		esac
 	else
 		return 1
 	fi

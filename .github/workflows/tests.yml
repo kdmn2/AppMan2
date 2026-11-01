@@ -1,0 +1,35 @@
+name: AppMan2 tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # so run-update-tests can diff against the previous release
+
+      - name: Build isolated test image
+        run: docker build -t appman-test -f tests/Dockerfile .
+
+      - name: Syntax-check every shell file (one bash -n per file)
+        run: docker run --rm -v "$PWD":/work:ro -w /work appman-test bash tests/syntax-check.sh
+
+      - name: ShellCheck (informational)
+        run: docker run --rm -v "$PWD":/work:ro -w /work appman-test shellcheck -f gcc appman modules/*.am tests/*.sh || true
+
+      - name: Run test suites (no network, no real installs, no credentials)
+        run: |
+          set -e
+          for suite in run-tests run-remove-tests run-fixture-tests run-update-tests; do
+            echo "########## tests/$suite.sh ##########"
+            docker run --rm --network none -v "$PWD":/work:ro -w /work \
+              appman-test bash "tests/$suite.sh" ./appman
+          done

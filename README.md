@@ -161,10 +161,16 @@ their installed applications.
 
 ## Testing
 
-All suites use a temporary `HOME`/XDG, a local HTTP fixture server and a local
-AppMan2 repo over `file://` — no network, no real installs. Run from the repo
-root with `bash tests/<suite>.sh ./appman` (preferably inside a disposable
-container):
+Syntax-check every shell file (a single `bash -n a b c` parses only `a`):
+
+```bash
+bash tests/syntax-check.sh
+```
+
+The suites use a temporary `HOME`/XDG, a local HTTP fixture server and a local
+AppMan2 repo over `file://` — no network, no real installs, no credentials.
+Run from the repo root with `bash tests/<suite>.sh ./appman` (or use
+`tests/Dockerfile` with `--network none`, as CI does):
 
 * `tests/run-tests.sh` — end-to-end install/update/remove, update reporting,
   stalled downloads, self-update.
@@ -173,6 +179,8 @@ container):
   failures, AppImage icon extraction, template smoke.
 * `tests/run-update-tests.sh` — release transition (1.1-2 → 1.1-3), source
   ownership, failed downloads, mixed old/new modules.
+
+CI (`.github/workflows/tests.yml`) runs all of the above with `--network none`.
 
 ## Git remotes (for maintainers)
 

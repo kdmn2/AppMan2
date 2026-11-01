@@ -50,10 +50,15 @@ trap cleanup EXIT
 
 mkdir -p "$WORK"/{serverdl,appsrepo/programs/x86_64,home/.config/appman}
 mkdir -p "$WORK"/home/.local/share/AM "$WORK"/home/.cache "$WORK"/home/.local/bin
+mkdir -p "$WORK"/appman2repo/modules
 export HOME="$WORK/home"
 export XDG_CONFIG_HOME="$HOME/.config"
 export XDG_DATA_HOME="$HOME/.local/share"
 export XDG_CACHE_HOME="$HOME/.cache"
+# Local AppMan2 repo so module downloads and self-update work without network.
+cp "$APPMAN" "$WORK/appman2repo/appman"
+cp "$ROOT/modules/"*.am "$WORK/appman2repo/modules/"
+export APPMAN2_REPO="file://$WORK/appman2repo"
 
 # ---------------------------------------------------------------------------
 # Local HTTP server: /ok, /notfound (404), /malformed (lies about length)
@@ -129,25 +134,36 @@ grep -q "https://api.gh.pkgforge.dev/repos/x" "$f" && echo "ON_OK" || echo "ON_B
 _alt_gh_off "$f"
 grep -q "https://api.github.com/repos/x" "$f" && echo "OFF_OK" || echo "OFF_BAD"
 
-# filter with a healthy quota: _alt_gh_filter emits nothing. It is a
-# conditional filter that callers (e.g. _downgrade) only invoke in the
-# low-quota branch, so "no output" here is the documented contract.
-_update_determine_gh_apps_number() { GH_API_ALLOWED=50; }
+# Boundaries: rewrite only when GH_API_ALLOWED <= 5; otherwise PRESERVE
+# input (fork fix). Unset GH_API_ALLOWED must not error and must preserve.
 ALT_GH="https://alt.example"
-out=$(printf 'u=https://api.github.com/x\n' | _alt_gh_filter)
-[ -z "$out" ] && echo "FILTER_HIGH_OK" || echo "FILTER_HIGH_BAD:$out"
-
-# filter with a low quota: rewritten
+for n in 3 5 6 8; do
+  _update_determine_gh_apps_number() { GH_API_ALLOWED=$n; }
+  out=$(printf 'u=https://api.github.com/x\n' | _alt_gh_filter)
+  printf 'Q%s=[%s]\n' "$n" "$out"
+done
+_update_determine_gh_apps_number() { :; }   # GH_API_ALLOWED unset
+out=$(printf 'u=https://api.github.com/x\n' | _alt_gh_filter 2>/dev/null)
+printf 'QUNSET=[%s]\n' "$out"
+# Filename input must also be supported (sed/cat with "$@").
+f="$WORK/apifile2"
+printf 'f=https://api.github.com/y\n' > "$f"
 _update_determine_gh_apps_number() { GH_API_ALLOWED=3; }
-out=$(printf 'u=https://api.github.com/x\n' | _alt_gh_filter)
-[ "$out" = "u=https://alt.example/x" ] && echo "FILTER_LOW_OK" || echo "FILTER_LOW_BAD:$out"
+printf 'QFILELOW=[%s]\n' "$(_alt_gh_filter "$f")"
+_update_determine_gh_apps_number() { GH_API_ALLOWED=50; }
+printf 'QFILEHIGH=[%s]\n' "$(_alt_gh_filter "$f")"
 EOS
 export WORK
 out=$(bash "$WORK/t1.sh" 2>&1)
 echo "$out" | grep -q ON_OK && ok "_alt_gh_on rewrites api.github.com -> ALT_GH" || ko "_alt_gh_on ($out)"
 echo "$out" | grep -q OFF_OK && ok "_alt_gh_off restores api.github.com" || ko "_alt_gh_off ($out)"
-echo "$out" | grep -q FILTER_HIGH_OK && ok "_alt_gh_filter emits nothing when quota healthy (caller branches first)" || ko "_alt_gh_filter high ($out)"
-echo "$out" | grep -q FILTER_LOW_OK && ok "_alt_gh_filter rewrites URLs when quota low" || ko "_alt_gh_filter low ($out)"
+echo "$out" | grep -q 'Q3=\[u=https://alt.example/x\]' && ok "_alt_gh_filter rewrites at quota 3" || ko "quota 3 ($out)"
+echo "$out" | grep -q 'Q5=\[u=https://alt.example/x\]' && ok "_alt_gh_filter rewrites at quota 5 (boundary)" || ko "quota 5 ($out)"
+echo "$out" | grep -q 'Q6=\[u=https://api.github.com/x\]' && ok "_alt_gh_filter preserves input at quota 6 (boundary, fork fix)" || ko "quota 6 ($out)"
+echo "$out" | grep -q 'Q8=\[u=https://api.github.com/x\]' && ok "_alt_gh_filter preserves input at quota 8" || ko "quota 8 ($out)"
+echo "$out" | grep -q 'QUNSET=\[u=https://api.github.com/x\]' && ok "_alt_gh_filter preserves input when GH_API_ALLOWED is unset" || ko "unset ($out)"
+echo "$out" | grep -q 'QFILELOW=\[f=https://alt.example/y\]' && ok "_alt_gh_filter rewrites filename input" || ko "file low ($out)"
+echo "$out" | grep -q 'QFILEHIGH=\[f=https://api.github.com/y\]' && ok "_alt_gh_filter preserves filename input" || ko "file high ($out)"
 
 ##############################################################################
 say ""
@@ -307,6 +323,8 @@ printf '◆ fallbackapp : Test fallback : https://example.test : %s/dl/x : 1.0\n
 printf '%s\n' "$WORK/apps" > "$XDG_CONFIG_HOME/appman/appman-config"
 touch "$XDG_DATA_HOME/AM/disable-dependencies-prompt"
 printf '%s\n' "$WORK/appsrepo" > "$XDG_DATA_HOME/AM/newrepo-on"
+# Cached am-extras fixture so $third_party_flags is set offline (see run-tests.sh).
+printf '# AppMan2 test fixture\nthird_party_flags="soarpkg"\n' > "$XDG_DATA_HOME/AM/am-extras"
 cp "$APPMAN" "$HOME/.local/bin/appman"
 AM2="$HOME/.local/bin/appman"
 
@@ -332,41 +350,36 @@ grep -qi 'Module not found' "$WORK/tpl.log" && ko "template module missing" || o
 
 ##############################################################################
 say ""
-say "== F8. downgrade proxy wiring =="
+say "== F8. downgrade proxy wiring (reported case) =="
 # Static: _downgrade must route its URL filter through _alt_gh_filter.
 grep -q '_downgrade_entries_filter | _alt_gh_filter' "$MGMT" \
 	&& ok "_downgrade pipes through _alt_gh_filter" || ko "_downgrade proxy wiring missing"
 grep -q '_alt_gh_on ./AM-rollback' "$MGMT" \
 	&& ok "AM-rollback stamped with ALT_GH" || ko "AM-rollback proxy stamp missing"
 
-# Behavioural probe: _alt_gh_filter is a CONDITIONAL filter. It rewrites only
-# when GH_API_ALLOWED <= 5 and otherwise emits NOTHING. _downgrade enters its
-# proxy branch when GH_API_REMAINING <= 10, but the filter's own test uses
-# GH_API_ALLOWED (= remaining - GH_APPS_NUMBER). For remaining in 6..10 the
-# filter emits nothing, so entries_list can become empty. This is recorded,
-# not asserted as correct.
+# Reproduce the reported downgrade case: _downgrade enters its proxy branch
+# when GH_API_REMAINING <= 10, but _alt_gh_filter recomputes GH_API_ALLOWED
+# (= remaining - GH_APPS_NUMBER). For GH_API_ALLOWED in 6..10 (or unset)
+# upstream emitted nothing, leaving entries_list empty. The fork fix must
+# preserve the list instead.
 cat > "$WORK/t9.sh" <<'EOS'
 . "$WORK/lib.sh"
 ALT_GH="https://alt.example"
-for n in 3 5 8; do
+entries() { printf 'https://api.github.com/dl/app-1.0.AppImage\nhttps://api.github.com/dl/app-0.9.AppImage\n'; }
+for n in 6 8; do
   _update_determine_gh_apps_number() { GH_API_ALLOWED=$n; }
-  out=$(printf 'https://api.github.com/x\n' | _alt_gh_filter)
-  printf 'Q%s=[%s]\n' "$n" "$out"
+  out=$(entries | _alt_gh_filter)
+  printf 'D%s_lines=%s\n' "$n" "$(printf '%s' "$out" | grep -c app)"
 done
-_update_determine_gh_apps_number() { :; }   # GH_API_ALLOWED unset
-out=$(printf 'https://api.github.com/x\n' | _alt_gh_filter 2>/dev/null)
-printf 'QUNSET=[%s]\n' "$out"
+_update_determine_gh_apps_number() { :; }
+out=$(entries | _alt_gh_filter 2>/dev/null)
+printf 'DUNSET_lines=%s\n' "$(printf '%s' "$out" | grep -c app)"
 EOS
 export WORK
 out=$(bash "$WORK/t9.sh" 2>&1)
-echo "$out" | grep -q 'Q3=\[https://alt.example/x\]' && ok "filter rewrites at quota 3" || ko "quota 3 ($out)"
-echo "$out" | grep -q 'Q5=\[https://alt.example/x\]' && ok "filter rewrites at quota 5 (boundary)" || ko "quota 5 ($out)"
-if echo "$out" | grep -q 'Q8=\[\]'; then
-	say "    NOTE: _alt_gh_filter emits nothing at GH_API_ALLOWED=8 while"
-	say "          _downgrade's proxy gate is GH_API_REMAINING<=10 -> potential empty list (upstream-inherited)"
-fi
-echo "$out" | grep -q 'QUNSET=\[\]' \
-	&& say "    NOTE: with GH_API_ALLOWED unset the numeric test is false and the filter emits nothing" || true
+echo "$out" | grep -q 'D6_lines=2' && ok "downgrade list survives at GH_API_ALLOWED=6 (fork fix)" || ko "quota 6 list lost ($out)"
+echo "$out" | grep -q 'D8_lines=2' && ok "downgrade list survives at GH_API_ALLOWED=8" || ko "quota 8 list lost ($out)"
+echo "$out" | grep -q 'DUNSET_lines=2' && ok "downgrade list survives when GH_API_ALLOWED is unset" || ko "unset list lost ($out)"
 
 say ""
 say "Results: $PASS passed, $FAIL failed"

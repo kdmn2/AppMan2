@@ -118,6 +118,8 @@ cp "$(dirname "$APPMAN")/modules/"*.am "$WORK/appman2repo/modules/" 2>/dev/null 
 printf '%s\n' "$WORK/apps" > "$XDG_CONFIG_HOME/appman/appman-config"
 touch "$XDG_DATA_HOME/AM/disable-dependencies-prompt"
 printf '%s\n' "$WORK/appsrepo" > "$XDG_DATA_HOME/AM/newrepo-on"
+# Cached am-extras fixture so $third_party_flags is set offline (see run-tests.sh).
+printf '# AppMan2 test fixture\nthird_party_flags="soarpkg"\n' > "$XDG_DATA_HOME/AM/am-extras"
 
 cp "$APPMAN" "$HOME/.local/bin/appman"
 AM2="$HOME/.local/bin/appman"
@@ -134,6 +136,7 @@ SENTINEL="$WORK/unrelated-user-file.txt"
 printf 'keep me\n' > "$SENTINEL"
 
 installed() { [ -f "$WORK/apps/$1/remove" ]; }
+ensure_installed() { installed "$1" || "$AM2" -y -i "$1" > /dev/null 2>&1; }
 
 ##############################################################################
 say ""
@@ -162,18 +165,24 @@ grep -qi 'has not been removed' "$WORK/r3.log" && ok "no accidental removal mess
 
 ##############################################################################
 say ""
-say "== R4. Empty input / EOF on the suggestion prompt =="
-# The "Use X instead? (Y/n)" prompt defaults to YES on empty input, so an
-# empty answer accepts the suggestion; the following remove prompt also
-# defaults to YES. This documents the actual (upstream) behaviour.
-printf '\n\n' | "$AM2" remove tapp-alpi > "$WORK/r4a.log" 2>&1
-installed tapp-alpine && ok "empty answer cancelled suggestion (safe default)" || ok "empty answer accepted suggestion and removed (upstream default Y)"
-
-# EOF: no answer at all.
-"$AM2" remove tapp-alp < /dev/null > "$WORK/r4b.log" 2>&1
-installed tapp-alpine && ok "EOF left app installed (safe)" || ok "EOF accepted suggestion and removed (upstream default Y)"
-# Re-install if any of the above removed it, so later tests have a target.
-if ! installed tapp-alpine; then "$AM2" -y -i tapp-alpine > /dev/null 2>&1; fi
+say "== R4. Empty / EOF / invalid answers cancel the suggestion =="
+# A substitution must be explicitly confirmed. Empty input, EOF and invalid
+# answers all cancel (fork safety fix) and must leave every app and the
+# unrelated sentinel intact.
+ensure_installed tapp-alpha
+ensure_installed tapp-alpine
+for ans in empty eof invalid; do
+	before="$(find "$WORK/apps" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | sort)"
+	case "$ans" in
+		empty)   printf '\n'    | "$AM2" remove tapp-alpi > "$WORK/r4-$ans.log" 2>&1 ;;
+		eof)     "$AM2" remove tapp-alpi < /dev/null > "$WORK/r4-$ans.log" 2>&1 ;;
+		invalid) printf 'maybe\n' | "$AM2" remove tapp-alpi > "$WORK/r4-$ans.log" 2>&1 ;;
+	esac
+	after="$(find "$WORK/apps" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | sort)"
+	[ "$before" = "$after" ] && ok "$ans answer cancelled the suggestion (no app removed)" || ko "$ans answer removed an app"
+	[ -f "$SENTINEL" ] && : || ko "sentinel lost during $ans"
+done
+installed tapp-alpha && installed tapp-alpine && ok "both apps intact after R4" || ko "an app was lost in R4"
 
 ##############################################################################
 say ""
@@ -202,23 +211,36 @@ printf '1\ny\n' | "$AM2" remove tapp-al > "$WORK/r5d.log" 2>&1
 
 ##############################################################################
 say ""
-say "== R6. Hard removal (option -R, no confirmation) =="
-# Ensure both exist.
-for a in tapp-alpha tapp-alpine; do installed "$a" || "$AM2" -y -i "$a" > /dev/null 2>&1; done
+say "== R6. Hard removal (option -R) confirmation =="
+ensure_installed tapp-alpha
+ensure_installed tapp-alpine
 
 # 6a. Rejection on the suggestion cancels -R as well.
 printf 'n\n' | "$AM2" -R tapp-alpi > "$WORK/r6a.log" 2>&1
 installed tapp-alpine && ok "-R rejection left app installed" || ko "-R removed despite rejection"
 
-# 6b. Accept the suggestion -> removed with no second prompt.
-printf 'y\n' | "$AM2" -R tapp-alpi > "$WORK/r6b.log" 2>&1
+# 6b-6d. Empty / EOF / invalid answers cancel -R.
+for ans in empty eof invalid; do
+	case "$ans" in
+		empty)   printf '\n' | "$AM2" -R tapp-alpi > "$WORK/r6-$ans.log" 2>&1 ;;
+		eof)     "$AM2" -R tapp-alpi < /dev/null > "$WORK/r6-$ans.log" 2>&1 ;;
+		invalid) printf 'x\n' | "$AM2" -R tapp-alpi > "$WORK/r6-$ans.log" 2>&1 ;;
+	esac
+	installed tapp-alpine && ok "-R $ans answer cancelled" || ko "-R $ans removed the app"
+done
+
+# 6e. `-y -R` keeps the suggestion default at "n" -> aborts.
+"$AM2" -y -R tapp-alpi > "$WORK/r6e.log" 2>&1
+installed tapp-alpine && ok "-y -R near-miss aborts (suggestion default is 'n')" || ko "-y -R removed via suggestion"
+
+# 6f. The same protection applies to normal removal with -y.
+"$AM2" -y remove tapp-alpi > "$WORK/r6f.log" 2>&1
+installed tapp-alpine && ok "-y remove near-miss aborts (no substitution)" || ko "-y remove substituted an app"
+
+# 6g. Explicit accept removes with no second prompt; unrelated app kept.
+printf 'y\n' | "$AM2" -R tapp-alpi > "$WORK/r6g.log" 2>&1
 installed tapp-alpine && ko "-R did not remove after accepting suggestion" || ok "-R accepted suggestion and removed"
 installed tapp-alpha && ok "-R unrelated app untouched" || ko "-R affected unrelated app"
-
-# 6c. `-R` with `-y` defaults the suggestion answer to "n" -> aborts.
-if ! installed tapp-alpine; then "$AM2" -y -i tapp-alpine > /dev/null 2>&1; fi
-"$AM2" -y -R tapp-alpi > "$WORK/r6c.log" 2>&1
-installed tapp-alpine && ok "-y -R near-miss aborts (suggestion default is 'n')" || ok "-y -R removed via suggestion (behaviour differs)"
 
 ##############################################################################
 say ""
